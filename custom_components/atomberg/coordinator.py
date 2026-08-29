@@ -11,6 +11,7 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_SERIES,
     CONF_DISPLAY_NAME,
+    CONF_IP_ADDRESS,
     MANUFACTURER,
     UNKNOWN_SERIES,
 )
@@ -82,6 +83,7 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
                         "series": cfg.data.get(CONF_DEVICE_SERIES, UNKNOWN_SERIES),
                         "model": "Atomberg Fan",
                         "state": dict(_LOCAL_INITIAL_STATE),
+                        "ip_address": cfg.data.get(CONF_IP_ADDRESS) or None,
                     },
                     api=None,
                     config_entry=cfg,

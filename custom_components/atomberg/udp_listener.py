@@ -2,12 +2,22 @@
 
 import asyncio
 import json
+import re
 from logging import getLogger
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .api import SUPPORTED_SERIES
+
 DISCOVERY_CALLBACK_KEY = "_discovery"
+
+# Matches a trailing `_<series>` suffix where <series> is one of the
+# documented device series tokens (e.g. `_R1`), not just any underscore.
+_SERIES_SUFFIX_RE = re.compile(
+    r"_(" + "|".join(re.escape(series) for series in SUPPORTED_SERIES) + r")$",
+    re.IGNORECASE,
+)
 
 _LOGGER = getLogger(__name__)
 
@@ -46,11 +56,14 @@ class UDPListener(asyncio.DatagramProtocol):
         if not device_id_raw:
             return {}
 
-        parts = device_id_raw.split("_", 1)
-        details = {"device_id": parts[0]}
-        if len(parts) > 1 and parts[1].strip():
-            details["device_series"] = parts[1].strip().upper()
-        return details
+        match = _SERIES_SUFFIX_RE.search(device_id_raw)
+        if not match:
+            return {"device_id": device_id_raw}
+
+        return {
+            "device_id": device_id_raw[: match.start()],
+            "device_series": match.group(1).upper(),
+        }
 
     def datagram_received(self, data, addr):
         """Decode data when broadcast received."""
@@ -66,7 +79,8 @@ class UDPListener(asyncio.DatagramProtocol):
             msg_data.update(self._extract_device_details(message))
 
         # Normalize device metadata from any payload form.
-        if device_id_field := msg_data.get("device_id"):
+        device_id_field = msg_data.get("device_id")
+        if isinstance(device_id_field, str) and device_id_field:
             msg_data.update(self._extract_device_details(device_id_field))
 
         for func in self._callbacks.values():

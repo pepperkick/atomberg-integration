@@ -53,8 +53,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Atomberg integration domain.
 
     Runs before any config entries are loaded.  Starts the shared UDP listener
-    early so that device broadcasts can trigger automatic discovery flows even
-    when no entries exist yet.
+    early so devices can be controlled locally as soon as entries are set up.
+    Integration-discovery flows are only registered once the user opts in via
+    a LOCAL_DISCOVERY config entry, see `_async_setup_local_discovery_entry`.
     """
     domain_data = hass.data.setdefault(DOMAIN, {UDP_LISTENER: None, ENTRIES: {}})
 
@@ -71,30 +72,6 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     domain_data[UDP_LISTENER] = udp_listener
     domain_data[SETUP_ACTIVE] = True
 
-    def _discovery_callback(msg_data: dict) -> None:
-        """Fire an integration-discovery flow for previously-unknown devices."""
-        device_id = msg_data.get("device_id")
-        if not device_id:
-            return
-
-        # Skip if this device is already managed by an existing local entry.
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            if entry.data.get(CONF_DEVICE_ID) == device_id:
-                return
-
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": SOURCE_INTEGRATION_DISCOVERY},
-                data={
-                    CONF_DEVICE_ID: device_id,
-                    CONF_DEVICE_SERIES: msg_data.get("device_series"),
-                    CONF_IP_ADDRESS: msg_data.get("ip_address"),
-                },
-            )
-        )
-
-    udp_listener.add_callback(DISCOVERY_CALLBACK_KEY, _discovery_callback)
     return True
 
 
@@ -188,8 +165,43 @@ async def _async_setup_local_discovery_entry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> bool:
     """Set up Atomberg local discovery bootstrap entry."""
-    # Discovery is handled globally via async_setup(); this entry only exists
-    # to let the user opt into local autodiscovery from the UI.
+    domain_data = hass.data.setdefault(DOMAIN, {UDP_LISTENER: None, ENTRIES: {}})
+
+    # Listener is normally already running from async_setup; start as fallback.
+    if not domain_data[UDP_LISTENER]:
+        udp_listener = UDPListener(hass)
+        try:
+            await udp_listener.start()
+        except Exception:
+            raise ConfigEntryError("Failed to start UDP listener.")  # noqa: B904
+        domain_data[UDP_LISTENER] = udp_listener
+    else:
+        udp_listener = domain_data[UDP_LISTENER]
+
+    def _discovery_callback(msg_data: dict) -> None:
+        """Fire an integration-discovery flow for previously-unknown devices."""
+        device_id = msg_data.get("device_id")
+        if not device_id:
+            return
+
+        # Skip if this device is already managed by an existing local entry.
+        for cfg_entry in hass.config_entries.async_entries(DOMAIN):
+            if cfg_entry.data.get(CONF_DEVICE_ID) == device_id:
+                return
+
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": SOURCE_INTEGRATION_DISCOVERY},
+                data={
+                    CONF_DEVICE_ID: device_id,
+                    CONF_DEVICE_SERIES: msg_data.get("device_series"),
+                    CONF_IP_ADDRESS: msg_data.get("ip_address"),
+                },
+            )
+        )
+
+    udp_listener.add_callback(DISCOVERY_CALLBACK_KEY, _discovery_callback)
     return True
 
 
@@ -207,6 +219,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return await hass.config_entries.async_unload_platforms(entry, IR_PLATFORMS)
 
     if control_method == ControlMethod.LOCAL_DISCOVERY:
+        domain_data = hass.data.get(DOMAIN)
+        udp_listener = domain_data.get(UDP_LISTENER) if domain_data else None
+        if udp_listener:
+            udp_listener.remove_callback(DISCOVERY_CALLBACK_KEY)
         return True
 
     platforms = (

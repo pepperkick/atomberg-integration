@@ -43,6 +43,7 @@ from .const import (
     DOMAIN,
     ENTRIES,
     FAN_MODEL_NAMES,
+    UNKNOWN_SERIES,
     ControlMethod,
     FanModel,
 )
@@ -245,8 +246,9 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
                 data={
                     CONF_CONTROL_METHOD: ControlMethod.LOCAL_UDP,
                     CONF_DEVICE_ID: device_id,
-                    CONF_DEVICE_SERIES: device_series,
+                    CONF_DEVICE_SERIES: device_series or UNKNOWN_SERIES,
                     CONF_DISPLAY_NAME: display_name,
+                    CONF_IP_ADDRESS: ip_address,
                 },
             )
 
